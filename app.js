@@ -212,7 +212,8 @@ function hbars(rows, color) { // rows: [{l, v, sub, extra}]
 let route = 'home', viewMonth = thisMonth(), hFilter = 'all', hQuery = '', insRange = 6, sheetBusy = false;
 const view = () => $('#view');
 const head = (title, extra = '') => `<div class="head"><h1>${title}</h1><div class="row">${extra}<button class="iconbtn" data-act="settings" aria-label="Settings">⚙️</button></div></div>`;
-const monthNav = () => `<div class="monthnav"><button data-act="month" data-d="-1" aria-label="Previous month">‹</button><b>${monthName(viewMonth)}</b><button data-act="month" data-d="1" aria-label="Next month" ${viewMonth >= thisMonth() ? 'disabled' : ''}>›</button></div>`;
+const maxMonth = () => addMonths(thisMonth(), 12); // plan up to a year ahead
+const monthNav = () => `<div class="monthnav"><button data-act="month" data-d="-1" aria-label="Previous month">‹</button><b>${monthName(viewMonth)}</b><button data-act="month" data-d="1" aria-label="Next month" ${viewMonth >= maxMonth() ? 'disabled' : ''}>›</button></div>`;
 const txItem = x => `<button class="item" data-act="edit" data-id="${x.id}"><span class="ico">${catIcon(x)}</span><span class="grow"><div class="t">${esc(x.p || (x.t === 'sav' ? (S.goals.find(g => g.id === x.g)?.name || 'Savings') : x.c))}</div><div class="s">${esc(x.t === 'exp' ? x.c : x.t === 'inc' ? 'Income' : 'Moved to savings')}${x.n ? ' · ' + esc(x.n) : ''}${x.r ? ' · 🔁' : ''}</div></span><span class="amt ${x.t}">${x.t === 'exp' ? '−' : x.t === 'inc' ? '+' : ''}${fmt(x.a)}</span></button>`;
 
 function render() {
@@ -233,7 +234,7 @@ function viewHome() {
   const top = isCur ? tips()[0] : null;
   return head(S.settings.name ? `Hi, ${esc(S.settings.name)} 👋` : 'Penny Plan') + banners() + monthNav() + `
   <div class="card hero">
-    <div class="lbl">Left to spend in ${monthName(key, { month: 'long' })}</div>
+    <div class="lbl">${key > thisMonth() ? 'Planned left in' : 'Left to spend in'} ${monthName(key, { month: 'long' })}</div>
     <div class="big ${st.left < 0 ? 'exp' : st.inc > 0 ? 'inc' : ''}">${fmt(st.left)}</div>
     ${st.inc > 0 || nTx ? `<div class="eq">${fmt(st.inc, true)} income − ${fmt(st.exp, true)} spent − ${fmt(st.sav, true)} saved</div>
     <div class="stack"><i style="width:${w(st.exp)}%;background:var(--exp)"></i><i style="width:${w(st.sav)}%;background:var(--sav)"></i><i style="width:${w(st.left)}%;background:var(--inc)"></i></div>
@@ -263,7 +264,7 @@ function motivator(st, isCur, key) {
   } else if (st.left > 0) {
     const need = tg - st.sav, amt = Math.min(st.left, need);
     msg = isCur ? `You have <b>${fmt(st.left, true)}</b> unspent. Move <b>${fmt(amt, true)}</b> to savings ${amt >= need ? `to hit your ${rate}% goal` : 'now — every bit counts'}.`
-      : `You finished with ${fmt(st.left, true)} unspent that could have gone to savings.`;
+      : key > thisMonth() ? `Plan ahead: ${fmt(st.left, true)} isn’t assigned yet. Decide how much goes to savings first.` : `You finished with ${fmt(st.left, true)} unspent that could have gone to savings.`;
     if (isCur) btn = `<button class="btn primary sm" data-act="add" data-t="sav" data-a="${amt}">Save ${fmt(amt, true)}</button>`;
   } else {
     const wants = Object.entries(st.cat).filter(([c]) => CAT[c]?.k !== 'need').sort((a, b) => b[1] - a[1])[0];
@@ -459,7 +460,7 @@ function viewSettings() {
 /* ---------- add / edit transaction ---------- */
 function txSheet(o = {}) {
   const ex = o.id ? S.tx.find(x => x.id === o.id) : null;
-  const v = ex || { t: o.t || 'exp', d: todayStr(), a: o.a || 0, p: '', c: '', g: o.g || (o.t === 'sav' ? S.goals[0]?.id || '' : ''), n: '', r: '' };
+  const v = ex || { t: o.t || 'exp', d: (viewMonth > thisMonth() && (route === 'home' || route === 'history')) ? viewMonth + '-01' : todayStr(), a: o.a || 0, p: '', c: '', g: o.g || (o.t === 'sav' ? S.goals[0]?.id || '' : ''), n: '', r: '' };
   let type = v.t;
   const html = `<div class="row between"><h3 style="margin:0">${ex ? 'Edit entry' : 'Add entry'}</h3><button class="iconbtn" data-act="close" aria-label="Close" style="box-shadow:none;background:var(--soft)">✕</button></div>
   <div class="seg" style="margin-top:12px"><button data-t="exp">Expense</button><button data-t="inc">Income</button><button data-t="sav">Savings</button></div>
@@ -509,7 +510,7 @@ function txSheet(o = {}) {
       } else if (!wantsRepeat && rec.r) { const r = S.recurs.find(r => r.id === rec.r); if (r) r.on = false; rec.r = ''; }
       if (ex) S.tx[S.tx.findIndex(x => x.id === ex.id)] = rec; else S.tx.push(rec);
       save(); closeSheet(); toast(ex ? 'Updated ✓' : 'Saved ✓');
-      if (route === 'home' || route === 'history') viewMonth = mk(rec.d) <= thisMonth() ? mk(rec.d) : viewMonth;
+      if (route === 'home' || route === 'history') viewMonth = mk(rec.d) <= maxMonth() ? mk(rec.d) : viewMonth;
       render();
       if (more) txSheet({ t: type, g: rec.g });
     };
@@ -630,7 +631,7 @@ const ACT = {
   add: d => txSheet({ t: d.t, a: d.a ? +d.a : 0, g: d.g }),
   edit: d => txSheet({ id: d.id }),
   close: closeSheet,
-  month: d => { const k = addMonths(viewMonth, +d.d); if (k <= thisMonth()) { viewMonth = k; render(); } },
+  month: d => { const k = addMonths(viewMonth, +d.d); if (k <= maxMonth()) { viewMonth = k; render(); } },
   filter: d => { hFilter = d.k; render(); },
   range: d => { insRange = +d.k; render(); },
   settings: () => { location.hash = '#settings'; },
@@ -678,7 +679,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet()
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
   // if the day rolls over while the app sits open in the background, refresh on return
   let day = todayStr();
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && todayStr() !== day) { day = todayStr(); genRecurring(); if (viewMonth > thisMonth()) viewMonth = thisMonth(); render(); } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && todayStr() !== day) { day = todayStr(); genRecurring(); render(); } });
   if ('serviceWorker' in navigator) {
     const had = !!navigator.serviceWorker.controller; let reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded && !$('.sheet-wrap')) { reloaded = true; location.reload(); } });
