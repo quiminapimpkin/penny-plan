@@ -1,6 +1,6 @@
 // Network-first with cache fallback: online users always get the newest files,
 // and the app still launches with no signal. Bump VERSION to force a refresh.
-const VERSION = 'pennyplan-v2';
+const VERSION = 'pennyplan-v3';
 const ASSETS = ['./', 'index.html', 'app.js', 'style.css', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 

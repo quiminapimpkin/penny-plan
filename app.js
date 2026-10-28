@@ -26,7 +26,7 @@ const pct = n => Math.round(n) + '%';
 
 /* ---------- categories ---------- */
 // k: need / want / waste.  bill: a recurring monthly bill you could negotiate or trim.
-const CATS = [
+const DEFAULT_CATS = [
   { n: 'Rent & Housing', i: '🏠', k: 'need', bill: 1 }, { n: 'Utilities', i: '💡', k: 'need', bill: 1 },
   { n: 'Phone', i: '📱', k: 'need', bill: 1 }, { n: 'Internet', i: '📶', k: 'need', bill: 1 },
   { n: 'Insurance', i: '🛡️', k: 'need', bill: 1 }, { n: 'Groceries', i: '🛒', k: 'need' },
@@ -35,9 +35,11 @@ const CATS = [
   { n: 'Coffee & Snacks', i: '☕', k: 'want' }, { n: 'Subscriptions', i: '📺', k: 'want', bill: 1 },
   { n: 'Entertainment', i: '🎮', k: 'want' }, { n: 'Shopping', i: '🛍️', k: 'want' },
   { n: 'Personal Care', i: '💈', k: 'want' }, { n: 'Travel', i: '✈️', k: 'want' },
-  { n: 'Fees & Interest', i: '⚠️', k: 'waste' }, { n: 'Other', i: '📦', k: 'want' },
+  { n: 'Fees & Interest', i: '⚠️', k: 'waste' }, { n: 'Other', i: '📦', k: 'want', keep: 1 },
 ];
-const CAT = Object.fromEntries(CATS.map(c => [c.n, c]));
+// the live list comes from saved state, so users can add, rename and remove categories
+let CATS = DEFAULT_CATS, CAT = Object.fromEntries(CATS.map(c => [c.n, c]));
+const syncCats = () => { CATS = S.cats; CAT = Object.fromEntries(CATS.map(c => [c.n, c])); };
 const catIcon = x => x.t === 'inc' ? '💵' : x.t === 'sav' ? '🐷' : (CAT[x.c]?.i || '📦');
 const KIND = { need: ['Needs', 'var(--sav)'], want: ['Wants', 'var(--warn)'], waste: ['Waste', 'var(--exp)'] };
 
@@ -45,7 +47,7 @@ const KIND = { need: ['Needs', 'var(--sav)'], want: ['Wants', 'var(--warn)'], wa
 let S = blank();
 function blank() {
   return {
-    v: 1, tx: [], recurs: [], budgets: {}, lastBackup: null, created: todayStr(),
+    v: 1, tx: [], recurs: [], budgets: {}, cats: DEFAULT_CATS.map(c => ({ ...c })), lastBackup: null, created: todayStr(),
     goals: [{ id: 'g-emergency', name: 'Emergency fund', target: 100000 }],
     settings: { name: '', saveRate: 20, currency: 'USD', onboarded: false },
   };
@@ -56,7 +58,7 @@ function norm(d) {
     ...b, ...d,
     settings: { ...b.settings, ...(d.settings || {}) },
     tx: (d.tx || []).filter(x => x && x.d && x.a > 0 && ['inc', 'exp', 'sav'].includes(x.t)),
-    recurs: d.recurs || [], goals: d.goals || b.goals, budgets: d.budgets || {},
+    recurs: d.recurs || [], goals: d.goals || b.goals, budgets: d.budgets || {}, cats: d.cats && d.cats.length ? d.cats : b.cats,
   };
 }
 let dbp;
@@ -217,6 +219,7 @@ const monthNav = () => `<div class="monthnav"><button data-act="month" data-d="-
 const txItem = x => `<button class="item" data-act="edit" data-id="${x.id}"><span class="ico">${catIcon(x)}</span><span class="grow"><div class="t">${esc(x.p || (x.t === 'sav' ? (S.goals.find(g => g.id === x.g)?.name || 'Savings') : x.c))}</div><div class="s">${esc(x.t === 'exp' ? x.c : x.t === 'inc' ? 'Income' : 'Moved to savings')}${x.n ? ' · ' + esc(x.n) : ''}${x.r ? ' · 🔁' : ''}</div></span><span class="amt ${x.t}">${x.t === 'exp' ? '−' : x.t === 'inc' ? '+' : ''}${fmt(x.a)}</span></button>`;
 
 function render() {
+  syncCats();
   route = (location.hash || '#home').slice(1);
   if (!['home', 'history', 'savings', 'insights', 'settings'].includes(route)) route = 'home';
   document.querySelectorAll('#tabs a').forEach(a => a.classList.toggle('on', a.dataset.tab === route));
@@ -438,6 +441,7 @@ function viewSettings() {
     <label class="f" style="margin-top:0">First name (optional)<input id="s-name" value="${esc(S.settings.name)}" autocomplete="off"></label>
     <label class="f">Savings goal: <b id="s-rate-l">${S.settings.saveRate}%</b> of income<input id="s-rate" type="range" min="0" max="50" step="1" value="${S.settings.saveRate}"></label>
     <label class="f">Currency<select id="s-cur">${['USD', 'CAD', 'EUR', 'GBP', 'AUD', 'MXN', 'INR', 'JPY'].map(c => `<option ${S.settings.currency === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+    <div class="setrow"><span>Categories</span><button class="btn sm" data-act="cats">Manage</button></div>
     <div class="setrow"><span>Monthly category limits</span><button class="btn sm" data-act="limits">Edit</button></div>
   </div>
   <div class="sethead">Repeating items</div><div class="card">
@@ -553,6 +557,51 @@ function limitsSheet() {
   });
 }
 
+function catsSheet() {
+  openSheet(`<div class="row between"><h3 style="margin:0">Categories</h3><button class="iconbtn" data-act="close" aria-label="Close" style="box-shadow:none;background:var(--soft)">✕</button></div>
+    <p class="mute small">Tap one to rename or remove it. Needs are essentials, wants are flexible, waste is money for nothing (fees).</p>
+    ${['need', 'want', 'waste'].map(k => `<div class="sethead">${KIND[k][0]}</div><div class="card list" style="padding:2px 14px;margin-bottom:6px">${CATS.filter(c => c.k === k).map(c => `<button class="item" data-act="catEdit" data-n="${esc(c.n)}"><span class="ico">${esc(c.i)}</span><span class="grow"><div class="t">${esc(c.n)}</div>${c.bill ? '<div class="s">Monthly bill</div>' : ''}</span><span class="mute">›</span></button>`).join('') || '<p class="small mute">None</p>'}</div>`).join('')}
+    <button class="btn primary block" data-act="catEdit" data-n="" style="margin-top:12px">＋ New category</button>`);
+}
+function catEditSheet(name) {
+  const c = name ? CATS.find(c => c.n === name) : null;
+  const used = c ? S.tx.filter(x => x.t === 'exp' && x.c === c.n).length : 0;
+  openSheet(`<h3>${c ? 'Edit category' : 'New category'}</h3>
+    <div class="row"><label class="f" style="width:84px;margin-top:12px">Emoji<input id="c-i" value="${esc(c?.i || '🏷️')}" maxlength="4" style="text-align:center;font-size:1.4rem"></label>
+    <label class="f grow">Name<input id="c-n" value="${esc(c?.n || '')}" maxlength="28" autocomplete="off"></label></div>
+    <label class="f">Type<select id="c-k">${['need', 'want', 'waste'].map(k => `<option value="${k}" ${(c?.k || 'want') === k ? 'selected' : ''}>${KIND[k][0]}</option>`).join('')}</select></label>
+    <label class="chk"><input type="checkbox" id="c-b" ${c?.bill ? 'checked' : ''}> <span>This is a monthly bill</span></label>
+    ${c ? `<p class="small mute">${used} entr${used === 1 ? 'y uses' : 'ies use'} this category.</p>` : ''}
+    <div class="row" style="margin-top:16px">${c && !c.keep ? '<button class="btn danger" data-del>Delete</button>' : ''}<button class="btn grow" data-back>Cancel</button><button class="btn primary grow" data-ok>Save</button></div>`, sh => {
+    $('[data-back]', sh).onclick = catsSheet;
+    $('[data-ok]', sh).onclick = () => {
+      const n = $('#c-n', sh).value.trim(), i = $('#c-i', sh).value.trim() || '🏷️';
+      if (!n) { toast('Give it a name'); return; }
+      if (CATS.some(x => x !== c && x.n.toLowerCase() === n.toLowerCase())) { toast('That name is already used'); return; }
+      const upd = { n, i, k: $('#c-k', sh).value, bill: $('#c-b', sh).checked ? 1 : 0 };
+      if (c) {
+        const old = c.n; Object.assign(c, upd);
+        if (old !== n) {
+          S.tx.forEach(x => { if (x.t === 'exp' && x.c === old) x.c = n; });
+          S.recurs.forEach(r => { if (r.t === 'exp' && r.c === old) r.c = n; });
+          if (S.budgets[old]) { S.budgets[n] = S.budgets[old]; delete S.budgets[old]; }
+        }
+      } else S.cats.push(upd);
+      save(); syncCats(); render(); catsSheet(); toast('Saved ✓');
+    };
+    const d = $('[data-del]', sh);
+    if (d) d.onclick = async () => {
+      if (!await ask(`Delete “${c.n}”?`, used ? `${used} entr${used === 1 ? 'y' : 'ies'} will move to “Other”.` : 'Nothing uses it.', 'Delete', true)) return;
+      const other = S.cats.find(x => x.keep)?.n || 'Other';
+      S.tx.forEach(x => { if (x.t === 'exp' && x.c === c.n) x.c = other; });
+      S.recurs.forEach(r => { if (r.t === 'exp' && r.c === c.n) r.c = other; });
+      delete S.budgets[c.n]; S.cats = S.cats.filter(x => x !== c);
+      save(); syncCats(); render(); catsSheet(); toast('Deleted');
+    };
+    if (!c) setTimeout(() => $('#c-n', sh).focus(), 30);
+  });
+}
+
 function welcomeSheet() {
   openSheet(`<div class="center"><div style="font-size:2.6rem">👋</div><h3 style="font-size:1.3rem">Welcome to Penny Plan</h3>
     <p class="mute">Log what comes in and what goes out, and see what’s left — live. Everything stays on your phone.</p></div>
@@ -639,6 +688,8 @@ const ACT = {
   goalNew: () => goalSheet(),
   goalEdit: d => goalSheet(d.id),
   limits: limitsSheet,
+  cats: catsSheet,
+  catEdit: d => catEditSheet(d.n),
   backup: backupNow,
   restore: () => $('#restoreFile').click(),
   csv: exportCsv,
